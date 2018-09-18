@@ -13,8 +13,9 @@ IPAddress broadcastIP(255,255,255,255); // Broadcast IP
 
 IPAddress pingIP; 
 char wolVarState[32];
-char SparkHostAddress[16];
+char ParticleHostAddress[16];
 bool hasSentPingingStatus = false;
+bool hasSentWaitingStatus = false;
 char MacAddress[80];
 
 enum WolState
@@ -223,6 +224,7 @@ int wakeHost(String param) {
 
     param.substring(index + 1).toCharArray(MacAddress, 80);
     wolState = SendingWol;
+    return TRUE;
 }
 
 
@@ -246,12 +248,12 @@ int pingHost(String param) {
 void setup() {
     pinMode(LED, OUTPUT);
 
-    strcpy(wolVarState, "");
+    strcpy(wolVarState, "Waiting");
     Particle.variable("state", wolVarState, STRING);
     
-    formatIPAddress(WiFi.localIP(), SparkHostAddress);
+    formatIPAddress(WiFi.localIP(), ParticleHostAddress);
     
-    Particle.variable("address", SparkHostAddress, STRING);
+    Particle.variable("address", ParticleHostAddress, STRING);
     
     Spark.function("wakeHost", wakeHost);
     Spark.function("pingHost", pingHost);
@@ -265,9 +267,16 @@ void loop() {
     {
         case NotConnected:
         case Waiting:
-            setLEDStatus(4);
+            if (!hasSentWaitingStatus) {
+                publishState("Waiting"); // Publish the message that we're waiting just once
+                
+                hasSentWaitingStatus = true;
+                
+                setLEDStatus(4); // Set LED status to waiting
+            }
             break;
         case SendingWol:
+            setLEDStatus(0); // Show that we are in the sending phase
             for (int i = 0; i < REPEAT_PACKET; i++) {
                 wake(MacAddress);
             }
@@ -275,14 +284,11 @@ void loop() {
             break;
         case WolSent:
             publishState("Sent WOL");
-            
-            setLEDStatus(0); // Show that we are in the sending phase and waiting for boot
-            
+        
             delay(bootSecs * 1000UL);  // Wait for computer to boot before pinging. 
             
             wolState = TestingAwake;
             hasSentPingingStatus = false;
-            
             break;
         case TestingAwake2:
         case TestingAwake3:
@@ -290,15 +296,17 @@ void loop() {
         case TestingAwake:
         {
             if (!hasSentPingingStatus) {
-                publishState("Pinging");
-                hasSentPingingStatus = true;    
+                publishState("Pinging"); // Publish the message that we're pinging just once
+                hasSentPingingStatus = true;
+                setLEDStatus(1); // Set LED status to pinging
             }
-            setLEDStatus(1); // Set LED status to pinging
 
-            if (WiFi.ping(pingIP) > 0)
+            if (WiFi.ping(pingIP) > 0) {
                 wolState = ConfirmedAwakeWaiting;
-            else
+            }
+            else {
                 wolState = (WolState) (wolState + 1);
+            }
             break;
         }
         case ConfirmedAwakeWaiting:
@@ -307,7 +315,9 @@ void loop() {
             setLEDStatus(2);
             delay(4000);
             
+            hasSentWaitingStatus = false;
             wolState = Waiting;
+            
             break;
         case FailedToWakeWaiting:
             publishState("Unreachable");
@@ -315,7 +325,9 @@ void loop() {
             setLEDStatus(3);
             delay(4000);
             
+            hasSentWaitingStatus = false;
             wolState = Waiting;
+            
             break;
     }
 }
